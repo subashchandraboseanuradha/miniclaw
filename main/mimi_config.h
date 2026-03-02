@@ -37,6 +37,9 @@
 #ifndef MIMI_SECRET_SEARCH_KEY
 #define MIMI_SECRET_SEARCH_KEY      ""
 #endif
+#ifndef MIMI_SECRET_WECOM_WEBHOOK
+#define MIMI_SECRET_WECOM_WEBHOOK   ""
+#endif
 
 /* WiFi */
 #define MIMI_WIFI_MAX_RETRY          10
@@ -65,11 +68,14 @@
 #define MIMI_TIMEZONE                "PST8PDT,M3.2.0,M11.1.0"
 
 /* LLM */
-#define MIMI_LLM_DEFAULT_MODEL       "claude-opus-4-5"
-#define MIMI_LLM_PROVIDER_DEFAULT    "anthropic"
+#define MIMI_LLM_DEFAULT_MODEL       "glm-5"
+#define MIMI_LLM_PROVIDER_DEFAULT    "zhipu"
 #define MIMI_LLM_MAX_TOKENS          4096
 #define MIMI_LLM_API_URL             "https://api.anthropic.com/v1/messages"
 #define MIMI_OPENAI_API_URL          "https://api.openai.com/v1/chat/completions"
+#define MIMI_ZHIPU_CODING_API_URL    "https://open.bigmodel.cn/api/coding/paas/v4/chat/completions"
+#define MIMI_ZHIPU_CODING_API_HOST   "open.bigmodel.cn"
+#define MIMI_ZHIPU_CODING_API_PATH   "/api/coding/paas/v4/chat/completions"
 #define MIMI_LLM_API_VERSION         "2023-06-01"
 #define MIMI_LLM_STREAM_BUF_SIZE     (32 * 1024)
 #define MIMI_LLM_LOG_VERBOSE_PAYLOAD 0
@@ -114,6 +120,7 @@
 /* NVS Namespaces */
 #define MIMI_NVS_WIFI                "wifi_config"
 #define MIMI_NVS_TG                  "tg_config"
+#define MIMI_NVS_WECOM               "wecom_config"
 #define MIMI_NVS_LLM                 "llm_config"
 #define MIMI_NVS_PROXY               "proxy_config"
 #define MIMI_NVS_SEARCH              "search_config"
@@ -122,6 +129,7 @@
 #define MIMI_NVS_KEY_SSID            "ssid"
 #define MIMI_NVS_KEY_PASS            "password"
 #define MIMI_NVS_KEY_TG_TOKEN        "bot_token"
+#define MIMI_NVS_KEY_WECOM_WEBHOOK   "webhook"
 #define MIMI_NVS_KEY_API_KEY         "api_key"
 #define MIMI_NVS_KEY_MODEL           "model"
 #define MIMI_NVS_KEY_PROVIDER        "provider"

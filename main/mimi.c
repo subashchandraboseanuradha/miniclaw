@@ -20,6 +20,7 @@
 #include "gateway/ws_server.h"
 #include "cli/serial_cli.h"
 #include "proxy/http_proxy.h"
+#include "wecom/wecom_bot.h"
 #include "tools/tool_registry.h"
 #include "cron/cron_service.h"
 #include "heartbeat/heartbeat.h"
@@ -74,16 +75,36 @@ static void outbound_dispatch_task(void *arg)
         ESP_LOGI(TAG, "Dispatching response to %s:%s", msg.channel, msg.chat_id);
 
         if (strcmp(msg.channel, MIMI_CHAN_TELEGRAM) == 0) {
-            esp_err_t send_err = telegram_send_message(msg.chat_id, msg.content);
-            if (send_err != ESP_OK) {
-                ESP_LOGE(TAG, "Telegram send failed for %s: %s", msg.chat_id, esp_err_to_name(send_err));
+            if (wecom_is_configured()) {
+                esp_err_t wc_err = wecom_send_message(msg.content);
+                if (wc_err != ESP_OK) {
+                    ESP_LOGE(TAG, "WeCom send failed for %s: %s", msg.chat_id, esp_err_to_name(wc_err));
+                }
             } else {
-                ESP_LOGI(TAG, "Telegram send success for %s (%d bytes)", msg.chat_id, (int)strlen(msg.content));
+                esp_err_t send_err = telegram_send_message(msg.chat_id, msg.content);
+                if (send_err != ESP_OK) {
+                    ESP_LOGE(TAG, "Telegram send failed for %s: %s", msg.chat_id, esp_err_to_name(send_err));
+                } else {
+                    ESP_LOGI(TAG, "Telegram send success for %s (%d bytes)", msg.chat_id, (int)strlen(msg.content));
+                }
             }
         } else if (strcmp(msg.channel, MIMI_CHAN_WEBSOCKET) == 0) {
             esp_err_t ws_err = ws_server_send(msg.chat_id, msg.content);
             if (ws_err != ESP_OK) {
                 ESP_LOGW(TAG, "WS send failed for %s: %s", msg.chat_id, esp_err_to_name(ws_err));
+            }
+        } else if (strcmp(msg.channel, MIMI_CHAN_WECOM) == 0) {
+            esp_err_t wc_err = wecom_send_message(msg.content);
+            if (wc_err != ESP_OK) {
+                ESP_LOGE(TAG, "WeCom send failed: %s", esp_err_to_name(wc_err));
+            }
+        } else if (strcmp(msg.channel, MIMI_CHAN_CLI) == 0) {
+            printf("AI> %s\n", msg.content);
+            if (wecom_is_configured()) {
+                esp_err_t wc_err = wecom_send_message(msg.content);
+                if (wc_err != ESP_OK) {
+                    ESP_LOGE(TAG, "WeCom send failed for CLI: %s", esp_err_to_name(wc_err));
+                }
             }
         } else if (strcmp(msg.channel, MIMI_CHAN_SYSTEM) == 0) {
             ESP_LOGI(TAG, "System message [%s]: %.128s", msg.chat_id, msg.content);
@@ -128,6 +149,7 @@ void app_main(void)
     ESP_ERROR_CHECK(wifi_manager_init());
     ESP_ERROR_CHECK(http_proxy_init());
     ESP_ERROR_CHECK(telegram_bot_init());
+    ESP_ERROR_CHECK(wecom_bot_init());
     ESP_ERROR_CHECK(llm_proxy_init());
     ESP_ERROR_CHECK(tool_registry_init());
     ESP_ERROR_CHECK(cron_service_init());

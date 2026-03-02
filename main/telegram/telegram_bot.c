@@ -433,6 +433,10 @@ esp_err_t telegram_bot_init(void)
 
 esp_err_t telegram_bot_start(void)
 {
+    if (s_bot_token[0] == '\0') {
+        ESP_LOGW(TAG, "Telegram bot token missing, polling task disabled");
+        return ESP_OK;
+    }
     BaseType_t ret = xTaskCreatePinnedToCore(
         telegram_poll_task, "tg_poll",
         MIMI_TG_POLL_STACK, NULL,

@@ -11,6 +11,8 @@
 #include "cron/cron_service.h"
 #include "heartbeat/heartbeat.h"
 #include "skills/skill_loader.h"
+#include "bus/message_bus.h"
+#include "wecom/wecom_bot.h"
 
 #include <string.h>
 #include <stdio.h>
@@ -87,6 +89,24 @@ static int cmd_set_api_key(int argc, char **argv)
     }
     llm_set_api_key(api_key_args.key->sval[0]);
     printf("API key saved.\n");
+    return 0;
+}
+
+/* --- set_wecom_webhook command --- */
+static struct {
+    struct arg_str *url;
+    struct arg_end *end;
+} wecom_webhook_args;
+
+static int cmd_set_wecom_webhook(int argc, char **argv)
+{
+    int nerrors = arg_parse(argc, argv, (void **)&wecom_webhook_args);
+    if (nerrors != 0) {
+        arg_print_errors(stderr, wecom_webhook_args.end, argv[0]);
+        return 1;
+    }
+    wecom_set_webhook(wecom_webhook_args.url->sval[0]);
+    printf("WeCom webhook saved.\n");
     return 0;
 }
 
@@ -199,6 +219,51 @@ static int cmd_heap_info(int argc, char **argv)
            (int)heap_caps_get_free_size(MALLOC_CAP_SPIRAM));
     printf("Total free:    %d bytes\n",
            (int)esp_get_free_heap_size());
+    return 0;
+}
+
+static int cmd_chat(int argc, char **argv)
+{
+    if (argc < 2) {
+        printf("Usage: chat <text>\n");
+        return 1;
+    }
+    /* Join argv[1..] to preserve spaces; avoids argtable issues with UTF-8. */
+    size_t total = 0;
+    for (int i = 1; i < argc; i++) {
+        total += strlen(argv[i]) + 1;
+    }
+    char *text = calloc(1, total + 1);
+    if (!text) {
+        printf("Out of memory.\n");
+        return 1;
+    }
+    for (int i = 1; i < argc; i++) {
+        if (i > 1) strcat(text, " ");
+        strcat(text, argv[i]);
+    }
+    if (text[0] == '\0') {
+        free(text);
+        printf("Empty message.\n");
+        return 1;
+    }
+
+    mimi_msg_t msg = {0};
+    strncpy(msg.channel, MIMI_CHAN_CLI, sizeof(msg.channel) - 1);
+    strncpy(msg.chat_id, "cli", sizeof(msg.chat_id) - 1);
+    msg.content = text;
+    if (!msg.content) {
+        free(text);
+        printf("Out of memory.\n");
+        return 1;
+    }
+    if (message_bus_push_inbound(&msg) != ESP_OK) {
+        printf("Inbound queue full. Try again.\n");
+        free(msg.content);
+        return 1;
+    }
+
+    printf("Queued.\n");
     return 0;
 }
 
@@ -471,6 +536,7 @@ static int cmd_config_show(int argc, char **argv)
     print_config("WiFi SSID",  MIMI_NVS_WIFI,   MIMI_NVS_KEY_SSID,     MIMI_SECRET_WIFI_SSID,  false);
     print_config("WiFi Pass",  MIMI_NVS_WIFI,   MIMI_NVS_KEY_PASS,     MIMI_SECRET_WIFI_PASS,  true);
     print_config("TG Token",   MIMI_NVS_TG,     MIMI_NVS_KEY_TG_TOKEN, MIMI_SECRET_TG_TOKEN,   true);
+    print_config("WeCom URL",  MIMI_NVS_WECOM,  MIMI_NVS_KEY_WECOM_WEBHOOK, MIMI_SECRET_WECOM_WEBHOOK, true);
     print_config("API Key",    MIMI_NVS_LLM,    MIMI_NVS_KEY_API_KEY,  MIMI_SECRET_API_KEY,    true);
     print_config("Model",      MIMI_NVS_LLM,    MIMI_NVS_KEY_MODEL,    MIMI_SECRET_MODEL,      false);
     print_config("Provider",   MIMI_NVS_LLM,    MIMI_NVS_KEY_PROVIDER, MIMI_SECRET_MODEL_PROVIDER, false);
@@ -485,9 +551,9 @@ static int cmd_config_show(int argc, char **argv)
 static int cmd_config_reset(int argc, char **argv)
 {
     const char *namespaces[] = {
-        MIMI_NVS_WIFI, MIMI_NVS_TG, MIMI_NVS_LLM, MIMI_NVS_PROXY, MIMI_NVS_SEARCH
+        MIMI_NVS_WIFI, MIMI_NVS_TG, MIMI_NVS_WECOM, MIMI_NVS_LLM, MIMI_NVS_PROXY, MIMI_NVS_SEARCH
     };
-    for (int i = 0; i < 5; i++) {
+    for (int i = 0; i < 6; i++) {
         nvs_handle_t nvs;
         if (nvs_open(namespaces[i], NVS_READWRITE, &nvs) == ESP_OK) {
             nvs_erase_all(nvs);
@@ -630,6 +696,17 @@ esp_err_t serial_cli_init(void)
     };
     esp_console_cmd_register(&api_key_cmd);
 
+    /* set_wecom_webhook */
+    wecom_webhook_args.url = arg_str1(NULL, NULL, "<url>", "WeCom robot webhook URL");
+    wecom_webhook_args.end = arg_end(1);
+    esp_console_cmd_t wecom_webhook_cmd = {
+        .command = "set_wecom_webhook",
+        .help = "Set WeCom robot webhook URL",
+        .func = &cmd_set_wecom_webhook,
+        .argtable = &wecom_webhook_args,
+    };
+    esp_console_cmd_register(&wecom_webhook_cmd);
+
     /* set_model */
     model_args.model = arg_str1(NULL, NULL, "<model>", "Model identifier");
     model_args.end = arg_end(1);
@@ -642,7 +719,7 @@ esp_err_t serial_cli_init(void)
     esp_console_cmd_register(&model_cmd);
 
     /* set_model_provider */
-    provider_args.provider = arg_str1(NULL, NULL, "<provider>", "Model provider (anthropic|openai)");
+    provider_args.provider = arg_str1(NULL, NULL, "<provider>", "Model provider (anthropic|openai|zhipu)");
     provider_args.end = arg_end(1);
     esp_console_cmd_t provider_cmd = {
         .command = "set_model_provider",
@@ -727,6 +804,14 @@ esp_err_t serial_cli_init(void)
         .func = &cmd_heap_info,
     };
     esp_console_cmd_register(&heap_cmd);
+
+    /* chat */
+    esp_console_cmd_t chat_cmd = {
+        .command = "chat",
+        .help = "Send a message to the agent via CLI (chat <text>)",
+        .func = &cmd_chat,
+    };
+    esp_console_cmd_register(&chat_cmd);
 
     /* set_search_key */
     search_key_args.key = arg_str1(NULL, NULL, "<key>", "Brave Search API key");

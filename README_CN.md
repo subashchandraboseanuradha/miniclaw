@@ -31,7 +31,7 @@ MimiClaw 把一块小小的 ESP32-S3 开发板变成你的私人 AI 助理。插
 
 ![](assets/mimiclaw.png)
 
-你在 Telegram 发一条消息，ESP32-S3 通过 WiFi 收到后送进 Agent 循环 — LLM 思考、调用工具、读取记忆 — 再把回复发回来。同时支持 **Anthropic (Claude)** 和 **OpenAI (GPT)** 两种提供商，运行时可切换。一切都跑在一颗 $5 的芯片上，所有数据存在本地 Flash。
+你在 Telegram 发一条消息，ESP32-S3 通过 WiFi 收到后送进 Agent 循环 — LLM 思考、调用工具、读取记忆 — 再把回复发回来。同时支持 **Anthropic (Claude)**、**OpenAI (GPT)** 和 **智谱 (Coding Plan)** 三种提供商，运行时可切换。一切都跑在一颗 $5 的芯片上，所有数据存在本地 Flash。
 
 ## 快速开始
 
@@ -40,7 +40,7 @@ MimiClaw 把一块小小的 ESP32-S3 开发板变成你的私人 AI 助理。插
 - 一块 **ESP32-S3 开发板**，16MB Flash + 8MB PSRAM（如小智 AI 开发板，~¥30）
 - 一根 **USB Type-C 数据线**
 - 一个 **Telegram Bot Token** — 在 Telegram 找 [@BotFather](https://t.me/BotFather) 创建
-- 一个 **Anthropic API Key** — 从 [console.anthropic.com](https://console.anthropic.com) 获取，或一个 **OpenAI API Key** — 从 [platform.openai.com](https://platform.openai.com) 获取
+- 一个 **Anthropic API Key** — 从 [console.anthropic.com](https://console.anthropic.com) 获取，或一个 **OpenAI API Key** — 从 [platform.openai.com](https://platform.openai.com) 获取，或一个 **智谱 API Key** — 从 [open.bigmodel.cn](https://open.bigmodel.cn) 获取
 
 ### 安装
 
@@ -182,15 +182,20 @@ mimi> clear_proxy                    # 清除代理
 ```
 mimi> wifi_set MySSID MyPassword   # 换 WiFi
 mimi> set_tg_token 123456:ABC...   # 换 Telegram Bot Token
-mimi> set_api_key sk-ant-api03-... # 换 API Key（Anthropic 或 OpenAI）
-mimi> set_model_provider openai    # 切换提供商（anthropic|openai）
-mimi> set_model gpt-4o             # 换模型
+mimi> set_api_key sk-ant-api03-... # 换 API Key（Anthropic/OpenAI/智谱）
+mimi> set_wecom_webhook https://qyapi.weixin.qq.com/cgi-bin/webhook/send?key=...  # 设置企微机器人 Webhook
+mimi> set_model_provider zhipu     # 切换提供商（anthropic|openai|zhipu）
+mimi> set_model glm-5              # 换模型
+mimi> chat "你好"                  # 串口发送消息（需要 WiFi）
 mimi> set_proxy 192.168.1.83 7897  # 设置代理
 mimi> clear_proxy                  # 清除代理
 mimi> set_search_key BSA...        # 设置 Brave Search API Key
 mimi> config_show                  # 查看所有配置（脱敏显示）
 mimi> config_reset                 # 清除 NVS，恢复编译时默认值
 ```
+
+说明：`zhipu` 提供商默认走 Coding Plan 端点 `https://open.bigmodel.cn/api/coding/paas/v4`（OpenAI 兼容的 `chat/completions`）。
+说明：配置企微 Webhook 后，原 `telegram` 的消息会改为推送到企微机器人。
 
 **调试与运维：**
 
@@ -263,7 +268,7 @@ MimiClaw 把所有数据存为纯文本文件，可以直接读取和编辑：
 
 ## 工具
 
-MimiClaw 同时支持 Anthropic 和 OpenAI 的工具调用 — LLM 在对话中可以调用工具，循环执行直到任务完成（ReAct 模式）。
+MimiClaw 同时支持 Anthropic、OpenAI 和 智谱 的工具调用 — LLM 在对话中可以调用工具，循环执行直到任务完成（ReAct 模式）。
 
 | 工具 | 说明 |
 |------|------|
@@ -293,7 +298,7 @@ MimiClaw 内置 cron 调度器，让 AI 可以自主安排任务。LLM 可以通
 - **OTA 更新** — WiFi 远程刷固件，无需 USB
 - **双核** — 网络 I/O 和 AI 处理分别跑在不同 CPU 核心
 - **HTTP 代理** — CONNECT 隧道，适配受限网络
-- **多提供商** — 同时支持 Anthropic (Claude) 和 OpenAI (GPT)，运行时可切换
+- **多提供商** — 同时支持 Anthropic (Claude)、OpenAI (GPT) 和 智谱 (Coding Plan)，运行时可切换
 - **定时任务** — AI 可自主创建周期性和一次性任务，重启后持久保存
 - **心跳服务** — 定期检查任务文件，驱动 AI 自主执行
 - **工具调用** — ReAct Agent 循环，两种提供商均支持工具调用
