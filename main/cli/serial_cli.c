@@ -223,6 +223,26 @@ static int cmd_heap_info(int argc, char **argv)
     return 0;
 }
 
+static void dump_chat_args(int argc, char **argv)
+{
+    printf("Debug: argc=%d\n", argc);
+    for (int i = 0; i < argc; i++) {
+        if (!argv[i]) {
+            printf("  argv[%d]=NULL\n", i);
+            continue;
+        }
+        size_t len = strlen(argv[i]);
+        printf("  argv[%d] len=%u bytes:", i, (unsigned)len);
+        for (size_t j = 0; j < len && j < 32; j++) {
+            printf(" %02x", (unsigned char)argv[i][j]);
+        }
+        if (len > 32) printf(" ...");
+        printf("\n");
+    }
+    printf("Hint: If you are typing non-ASCII (e.g. Chinese) and see empty args,\n");
+    printf("      your serial terminal may be dropping characters. Try the web UI.\n");
+}
+
 static int cmd_chat(int argc, char **argv)
 {
     if (argc < 2) {
@@ -246,6 +266,9 @@ static int cmd_chat(int argc, char **argv)
     if (text[0] == '\0') {
         free(text);
         printf("Empty message.\n");
+        printf("Tip: Your serial terminal may drop non-ASCII (e.g. Chinese).\n");
+        printf("Try the Web UI for UTF-8 input.\n");
+        dump_chat_args(argc, argv);
         return 1;
     }
 

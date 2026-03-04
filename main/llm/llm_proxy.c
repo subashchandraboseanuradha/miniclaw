@@ -4,6 +4,7 @@
 
 #include <string.h>
 #include <stdlib.h>
+#include <stdarg.h>
 #include "esp_log.h"
 #include "esp_http_client.h"
 #include "esp_crt_bundle.h"
@@ -21,6 +22,7 @@ static const char *TAG = "llm";
 static char s_api_key[LLM_API_KEY_MAX_LEN] = {0};
 static char s_model[LLM_MODEL_MAX_LEN] = MIMI_LLM_DEFAULT_MODEL;
 static char s_provider[16] = MIMI_LLM_PROVIDER_DEFAULT;
+static char s_last_error[256] = {0};
 
 static void llm_log_payload(const char *label, const char *payload)
 {
@@ -79,6 +81,23 @@ static void safe_copy(char *dst, size_t dst_size, const char *src)
     size_t n = strnlen(src, dst_size - 1);
     memcpy(dst, src, n);
     dst[n] = '\0';
+}
+
+static void llm_set_last_error(const char *fmt, ...)
+{
+    if (!fmt) {
+        s_last_error[0] = '\0';
+        return;
+    }
+    va_list args;
+    va_start(args, fmt);
+    vsnprintf(s_last_error, sizeof(s_last_error), fmt, args);
+    va_end(args);
+}
+
+const char *llm_last_error(void)
+{
+    return s_last_error;
 }
 
 /* ── Response buffer ──────────────────────────────────────────── */
@@ -518,8 +537,12 @@ esp_err_t llm_chat_tools(const char *system_prompt,
                          llm_response_t *resp)
 {
     memset(resp, 0, sizeof(*resp));
+    llm_set_last_error(NULL);
 
-    if (s_api_key[0] == '\0') return ESP_ERR_INVALID_STATE;
+    if (s_api_key[0] == '\0') {
+        llm_set_last_error("No API key configured");
+        return ESP_ERR_INVALID_STATE;
+    }
 
     /* Build request body (non-streaming) */
     cJSON *body = cJSON_CreateObject();
@@ -559,7 +582,10 @@ esp_err_t llm_chat_tools(const char *system_prompt,
 
     char *post_data = cJSON_PrintUnformatted(body);
     cJSON_Delete(body);
-    if (!post_data) return ESP_ERR_NO_MEM;
+    if (!post_data) {
+        llm_set_last_error("Failed to build request payload");
+        return ESP_ERR_NO_MEM;
+    }
 
     ESP_LOGI(TAG, "Calling LLM API with tools (provider: %s, model: %s, body: %d bytes)",
              s_provider, s_model, (int)strlen(post_data));
@@ -569,6 +595,7 @@ esp_err_t llm_chat_tools(const char *system_prompt,
     resp_buf_t rb;
     if (resp_buf_init(&rb, MIMI_LLM_STREAM_BUF_SIZE) != ESP_OK) {
         free(post_data);
+        llm_set_last_error("Out of memory building response buffer");
         return ESP_ERR_NO_MEM;
     }
 
@@ -579,6 +606,7 @@ esp_err_t llm_chat_tools(const char *system_prompt,
     if (err != ESP_OK) {
         ESP_LOGE(TAG, "HTTP request failed: %s", esp_err_to_name(err));
         llm_log_payload("LLM tools partial response", rb.data);
+        llm_set_last_error("HTTP request failed: %s", esp_err_to_name(err));
         resp_buf_free(&rb);
         return err;
     }
@@ -587,6 +615,7 @@ esp_err_t llm_chat_tools(const char *system_prompt,
 
     if (status != 200) {
         ESP_LOGE(TAG, "API error %d: %.500s", status, rb.data ? rb.data : "");
+        llm_set_last_error("API error %d: %.200s", status, rb.data ? rb.data : "");
         resp_buf_free(&rb);
         return ESP_FAIL;
     }
@@ -597,6 +626,7 @@ esp_err_t llm_chat_tools(const char *system_prompt,
 
     if (!root) {
         ESP_LOGE(TAG, "Failed to parse API response JSON");
+        llm_set_last_error("Failed to parse API response JSON");
         return ESP_FAIL;
     }
 

@@ -194,7 +194,7 @@ mimi> set_tg_token 123456:ABC...   # change Telegram bot token
 mimi> set_api_key sk-ant-api03-... # change API key (Anthropic, OpenAI, or Zhipu)
 mimi> set_wecom_webhook https://qyapi.weixin.qq.com/cgi-bin/webhook/send?key=...  # set WeCom robot webhook
 mimi> set_model_provider zhipu     # switch provider (anthropic|openai|zhipu)
-mimi> set_model glm-5              # change LLM model
+mimi> set_model GLM-4-FlashX-250414 # change LLM model
 mimi> chat "hello"                 # send a message via serial (requires WiFi)
 mimi> set_proxy 127.0.0.1 7897  # set HTTP proxy
 mimi> clear_proxy                  # remove proxy

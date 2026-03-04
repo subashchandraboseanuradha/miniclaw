@@ -209,7 +209,7 @@ mimi> set_tg_token 123456:ABC...   # 换 Telegram Bot Token
 mimi> set_api_key sk-ant-api03-... # 换 API Key（Anthropic/OpenAI/智谱）
 mimi> set_wecom_webhook https://qyapi.weixin.qq.com/cgi-bin/webhook/send?key=...  # 设置企微机器人 Webhook
 mimi> set_model_provider zhipu     # 切换提供商（anthropic|openai|zhipu）
-mimi> set_model glm-5              # 换模型
+mimi> set_model GLM-4-FlashX-250414 # 换模型
 mimi> chat "你好"                  # 串口发送消息（需要 WiFi）
 mimi> set_proxy 192.168.1.83 7897  # 设置代理
 mimi> clear_proxy                  # 清除代理

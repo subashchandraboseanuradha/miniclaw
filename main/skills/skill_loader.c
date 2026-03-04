@@ -87,6 +87,28 @@ static const char *TAG = "skills";
     "2. Translate directly using your language knowledge\\n" \
     "3. For specialized terms, use web_search to verify\\n\"\n"
 
+#define BUILTIN_PERCEPTION \
+    "# Perception (Camera & Mic)\n" \
+    "\n" \
+    "You are running on an ESP32-S3 with a camera and microphone. You can capture images and audio, " \
+    "then analyze them with cloud AI tools to respond to the user.\n" \
+    "\n" \
+    "## When to use\n" \
+    "Use this when the user asks what you can see/hear, asks to describe what is in front of the device, " \
+    "or asks to transcribe speech.\n" \
+    "\n" \
+    "## How to use\n" \
+    "1. For vision: use `observe_scene` to capture + analyze in one step. To analyze a recent image, pass capture=false with its path.\n" \
+    "2. For audio: use `listen_and_transcribe` to record + transcribe in one step.\n" \
+    "3. If a tool returns an error, clearly disclose the error to the user and suggest a retry.\n" \
+    "4. If the user did not explicitly request capture/record, ask for confirmation first.\n" \
+    "\n" \
+    "## Example\n" \
+    "User: \"你面前有什么？\"\n" \
+    "→ camera_capture\n" \
+    "→ vision_analyze {\"prompt\":\"描述这张图\"}\n" \
+    "→ Reply with the description\n"
+
 /* Built-in skill registry */
 typedef struct {
     const char *filename;   /* e.g. "weather" */
@@ -97,6 +119,7 @@ static const builtin_skill_t s_builtins[] = {
     { "weather",        BUILTIN_WEATHER        },
     { "daily-briefing", BUILTIN_DAILY_BRIEFING },
     { "skill-creator",  BUILTIN_SKILL_CREATOR  },
+    { "perception",     BUILTIN_PERCEPTION     },
 };
 
 #define NUM_BUILTINS (sizeof(s_builtins) / sizeof(s_builtins[0]))

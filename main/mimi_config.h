@@ -68,7 +68,7 @@
 #define MIMI_TIMEZONE                "PST8PDT,M3.2.0,M11.1.0"
 
 /* LLM */
-#define MIMI_LLM_DEFAULT_MODEL       "glm-5"
+#define MIMI_LLM_DEFAULT_MODEL       "GLM-4-FlashX-250414"
 #define MIMI_LLM_PROVIDER_DEFAULT    "zhipu"
 #define MIMI_LLM_MAX_TOKENS          4096
 #define MIMI_LLM_API_URL             "https://api.anthropic.com/v1/messages"

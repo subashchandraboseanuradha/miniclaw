@@ -27,6 +27,12 @@ esp_err_t llm_set_provider(const char *provider);
  */
 esp_err_t llm_set_model(const char *model);
 
+/**
+ * Get last LLM error message (for user-facing disclosure).
+ * Returns empty string if no error recorded.
+ */
+const char *llm_last_error(void);
+
 /* ── Tool Use Support ──────────────────────────────────────────── */
 
 typedef struct {

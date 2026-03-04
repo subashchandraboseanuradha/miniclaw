@@ -13,11 +13,16 @@
 #include "nvs.h"
 #include "cJSON.h"
 #include "mbedtls/base64.h"
+#include "esp_timer.h"
+#include <sys/stat.h>
+#include <unistd.h>
 
 static const char *TAG = "media_tool";
 
 #define MEDIA_MAX_IMAGE_BYTES (512 * 1024)
 #define MEDIA_MAX_AUDIO_BYTES (1024 * 1024)
+#define MEDIA_RECENT_MAX 3
+#define MEDIA_PATH_MAX 96
 
 static char s_api_key[320] = {0};
 
@@ -78,22 +83,6 @@ static esp_err_t http_event_handler(esp_http_client_event_t *evt)
     return ESP_OK;
 }
 
-static size_t append_line(char *out, size_t out_size, size_t off, const char *fmt, ...)
-{
-    if (off >= out_size) return off;
-    va_list args;
-    va_start(args, fmt);
-    int n = vsnprintf(out + off, out_size - off, fmt, args);
-    va_end(args);
-    if (n < 0) return off;
-    size_t added = (size_t)n;
-    if (off + added >= out_size) {
-        out[out_size - 1] = '\0';
-        return out_size;
-    }
-    return off + added;
-}
-
 static const char *json_get_string(cJSON *root, const char *key)
 {
     cJSON *item = cJSON_GetObjectItem(root, key);
@@ -106,6 +95,72 @@ static int json_get_int(cJSON *root, const char *key, int def)
     cJSON *item = cJSON_GetObjectItem(root, key);
     if (item && cJSON_IsNumber(item)) return item->valueint;
     return def;
+}
+
+static bool json_get_bool(cJSON *root, const char *key, bool def)
+{
+    cJSON *item = cJSON_GetObjectItem(root, key);
+    if (item && cJSON_IsBool(item)) return cJSON_IsTrue(item);
+    return def;
+}
+
+static void ensure_media_dir(void)
+{
+    struct stat st;
+    if (stat(MIMI_SPIFFS_BASE "/media", &st) != 0) {
+        mkdir(MIMI_SPIFFS_BASE "/media", 0775);
+    }
+}
+
+static int load_recent_paths(char paths[MEDIA_RECENT_MAX][MEDIA_PATH_MAX])
+{
+    FILE *f = fopen(MIMI_SPIFFS_BASE "/media/cam_index.txt", "r");
+    if (!f) return 0;
+    int count = 0;
+    char line[MEDIA_PATH_MAX];
+    while (fgets(line, sizeof(line), f) && count < MEDIA_RECENT_MAX) {
+        size_t len = strlen(line);
+        while (len > 0 && (line[len - 1] == '\n' || line[len - 1] == '\r')) {
+            line[--len] = '\0';
+        }
+        if (len == 0) continue;
+        strncpy(paths[count], line, MEDIA_PATH_MAX - 1);
+        paths[count][MEDIA_PATH_MAX - 1] = '\0';
+        count++;
+    }
+    fclose(f);
+    return count;
+}
+
+static void save_recent_paths(char paths[MEDIA_RECENT_MAX][MEDIA_PATH_MAX], int count)
+{
+    FILE *f = fopen(MIMI_SPIFFS_BASE "/media/cam_index.txt", "w");
+    if (!f) return;
+    for (int i = 0; i < count; i++) {
+        if (paths[i][0]) {
+            fprintf(f, "%s\n", paths[i]);
+        }
+    }
+    fclose(f);
+}
+
+static void add_recent_path(const char *path)
+{
+    char paths[MEDIA_RECENT_MAX][MEDIA_PATH_MAX] = {0};
+    int count = load_recent_paths(paths);
+    if (count >= MEDIA_RECENT_MAX) {
+        /* Remove oldest file */
+        unlink(paths[0]);
+        for (int i = 1; i < count; i++) {
+            strncpy(paths[i - 1], paths[i], MEDIA_PATH_MAX - 1);
+            paths[i - 1][MEDIA_PATH_MAX - 1] = '\0';
+        }
+        count = MEDIA_RECENT_MAX - 1;
+    }
+    strncpy(paths[count], path, MEDIA_PATH_MAX - 1);
+    paths[count][MEDIA_PATH_MAX - 1] = '\0';
+    count++;
+    save_recent_paths(paths, count);
 }
 
 static esp_err_t read_file(const char *path, uint8_t **out_buf, size_t *out_len, size_t max_len)
@@ -421,6 +476,138 @@ esp_err_t tool_audio_record_execute(const char *input_json, char *output, size_t
     return err;
 }
 
+esp_err_t tool_observe_scene_execute(const char *input_json, char *output, size_t output_size)
+{
+    if (s_api_key[0] == '\0') {
+        snprintf(output, output_size, "no API key configured");
+        return ESP_ERR_INVALID_STATE;
+    }
+
+    const char *path = NULL;
+    const char *prompt = NULL;
+    const char *model = NULL;
+    bool do_capture = true;
+    cJSON *root = input_json ? cJSON_Parse(input_json) : NULL;
+    if (root) {
+        const char *p = json_get_string(root, "path");
+        if (p && p[0]) path = p;
+        prompt = json_get_string(root, "prompt");
+        model = json_get_string(root, "model");
+        do_capture = json_get_bool(root, "capture", true);
+    }
+    if (!prompt || prompt[0] == '\0') prompt = "Describe the image.";
+    if (!model || model[0] == '\0') model = MIMI_ZHIPU_VISION_MODEL;
+
+    char auto_path[MEDIA_PATH_MAX] = {0};
+    char out_path[128] = {0};
+    bool use_auto_path = false;
+    if (!path || path[0] == '\0') {
+        use_auto_path = true;
+        ensure_media_dir();
+        uint64_t ms = (uint64_t)(esp_timer_get_time() / 1000);
+        snprintf(auto_path, sizeof(auto_path), MIMI_SPIFFS_BASE "/media/cam_%llu.jpg",
+                 (unsigned long long)ms);
+        path = auto_path;
+    }
+
+    if (do_capture) {
+        esp_err_t err = media_camera_capture(path, out_path, sizeof(out_path));
+        if (root) cJSON_Delete(root);
+
+        if (err == ESP_ERR_NOT_SUPPORTED) {
+            snprintf(output, output_size, "camera capture not supported on this build");
+            return err;
+        }
+        if (err != ESP_OK) {
+            snprintf(output, output_size, "camera capture failed: %s", esp_err_to_name(err));
+            return err;
+        }
+        if (use_auto_path) {
+            add_recent_path(path);
+        }
+    } else {
+        if (root) cJSON_Delete(root);
+        if (!path || path[0] == '\0') {
+            snprintf(output, output_size, "missing 'path' for analyze-only");
+            return ESP_ERR_INVALID_ARG;
+        }
+    }
+
+    const char *final_path = out_path[0] ? out_path : path;
+    cJSON *vreq = cJSON_CreateObject();
+    cJSON_AddStringToObject(vreq, "path", final_path);
+    cJSON_AddStringToObject(vreq, "prompt", prompt);
+    if (model && model[0]) {
+        cJSON_AddStringToObject(vreq, "model", model);
+    }
+    char *vreq_json = cJSON_PrintUnformatted(vreq);
+    cJSON_Delete(vreq);
+    if (!vreq_json) {
+        snprintf(output, output_size, "failed to build vision request");
+        return ESP_ERR_NO_MEM;
+    }
+
+    esp_err_t err = tool_vision_analyze_execute(vreq_json, output, output_size);
+    free(vreq_json);
+    if (err != ESP_OK) {
+        char msg[256];
+        strncpy(msg, output, sizeof(msg) - 1);
+        msg[sizeof(msg) - 1] = '\0';
+        snprintf(output, output_size, "captured image at %s, then %s", final_path, msg);
+    }
+    return err;
+}
+
+esp_err_t tool_listen_transcribe_execute(const char *input_json, char *output, size_t output_size)
+{
+    if (s_api_key[0] == '\0') {
+        snprintf(output, output_size, "no API key configured");
+        return ESP_ERR_INVALID_STATE;
+    }
+
+    const char *path = MIMI_SPIFFS_BASE "/media/audio.wav";
+    int duration_ms = 3000;
+    const char *model = NULL;
+    cJSON *root = input_json ? cJSON_Parse(input_json) : NULL;
+    if (root) {
+        const char *p = json_get_string(root, "path");
+        if (p && p[0]) path = p;
+        duration_ms = json_get_int(root, "duration_ms", duration_ms);
+        model = json_get_string(root, "model");
+    }
+    if (!model || model[0] == '\0') model = MIMI_ZHIPU_ASR_MODEL;
+
+    char out_path[128] = {0};
+    esp_err_t err = media_audio_record(path, duration_ms, out_path, sizeof(out_path));
+    if (root) cJSON_Delete(root);
+
+    if (err == ESP_ERR_NOT_SUPPORTED) {
+        snprintf(output, output_size, "audio record not supported on this build");
+        return err;
+    }
+    if (err != ESP_OK) {
+        snprintf(output, output_size, "audio record failed: %s", esp_err_to_name(err));
+        return err;
+    }
+
+    const char *final_path = out_path[0] ? out_path : path;
+    cJSON *treq = cJSON_CreateObject();
+    cJSON_AddStringToObject(treq, "path", final_path);
+    if (model && model[0]) {
+        cJSON_AddStringToObject(treq, "model", model);
+    }
+    char *treq_json = cJSON_PrintUnformatted(treq);
+    cJSON_Delete(treq);
+    if (!treq_json) {
+        snprintf(output, output_size, "failed to build transcription request");
+        return ESP_ERR_NO_MEM;
+    }
+
+    err = tool_audio_transcribe_execute(treq_json, output, output_size);
+    free(treq_json);
+    return err;
+}
+
 esp_err_t tool_vision_analyze_execute(const char *input_json, char *output, size_t output_size)
 {
     if (s_api_key[0] == '\0') {
@@ -502,14 +689,29 @@ esp_err_t tool_vision_analyze_execute(const char *input_json, char *output, size
 
     int status = 0;
     char *resp = NULL;
-    esp_err_t err = http_post_json(MIMI_ZHIPU_API_URL, MIMI_ZHIPU_API_HOST, MIMI_ZHIPU_API_PATH,
-                                   payload, &resp, &status);
+    esp_err_t err = ESP_OK;
+    int attempts = 0;
+    for (; attempts < 2; attempts++) {
+        status = 0;
+        resp = NULL;
+        err = http_post_json(MIMI_ZHIPU_API_URL, MIMI_ZHIPU_API_HOST, MIMI_ZHIPU_API_PATH,
+                             payload, &resp, &status);
+        if (err == ESP_OK && status == 200) {
+            break;
+        }
+        if (resp) {
+            free(resp);
+            resp = NULL;
+        }
+        vTaskDelay(500 / portTICK_PERIOD_MS);
+    }
     free(payload);
     if (data_url) free(data_url);
     if (root) cJSON_Delete(root);
 
     if (err != ESP_OK) {
-        snprintf(output, output_size, "vision request failed: %s", esp_err_to_name(err));
+        snprintf(output, output_size, "vision request failed after %d attempt(s): %s",
+                 attempts, esp_err_to_name(err));
         free(resp);
         return err;
     }

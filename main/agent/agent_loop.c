@@ -8,6 +8,8 @@
 
 #include <string.h>
 #include <stdlib.h>
+#include <strings.h>
+#include <ctype.h>
 #include "freertos/FreeRTOS.h"
 #include "freertos/task.h"
 #include "esp_log.h"
@@ -17,6 +19,50 @@
 static const char *TAG = "agent";
 
 #define TOOL_OUTPUT_SIZE  (8 * 1024)
+
+static bool contains_ci(const char *haystack, const char *needle)
+{
+    if (!haystack || !needle || !needle[0]) return false;
+    return strcasestr(haystack, needle) != NULL;
+}
+
+static bool should_force_observe(const char *text)
+{
+    if (!text || !text[0]) return false;
+
+    /* English triggers */
+    if (contains_ci(text, "what can you see") ||
+        contains_ci(text, "what do you see") ||
+        contains_ci(text, "describe what you see") ||
+        contains_ci(text, "what's in front") ||
+        contains_ci(text, "take a photo") ||
+        contains_ci(text, "take a picture") ||
+        contains_ci(text, "camera") ||
+        contains_ci(text, "look at") ||
+        contains_ci(text, "check again")) {
+        return true;
+    }
+
+    /* Chinese triggers */
+    if (strstr(text, "你面前") ||
+        strstr(text, "你看到") ||
+        strstr(text, "你看见") ||
+        strstr(text, "你能看到") ||
+        strstr(text, "看看") ||
+        strstr(text, "看一下") ||
+        strstr(text, "描述") ||
+        strstr(text, "拍照") ||
+        strstr(text, "照片") ||
+        strstr(text, "图片") ||
+        strstr(text, "图像") ||
+        strstr(text, "场景") ||
+        strstr(text, "再看") ||
+        strstr(text, "再拍")) {
+        return true;
+    }
+
+    return false;
+}
 
 /* Build the assistant content array from llm_response_t for the messages history.
  * Returns a cJSON array with text and tool_use blocks. */
@@ -191,6 +237,41 @@ static void agent_loop_task(void *arg)
         if (err != ESP_OK) continue;
 
         ESP_LOGI(TAG, "Processing message from %s:%s", msg.channel, msg.chat_id);
+        char llm_error[256] = {0};
+        esp_err_t last_err = ESP_OK;
+
+        /* Optional: force fresh observation for vision requests */
+        char *obs_text = NULL;
+        if (should_force_observe(msg.content)) {
+            ESP_LOGI(TAG, "Auto observe trigger detected");
+            cJSON *req = cJSON_CreateObject();
+            cJSON_AddStringToObject(req, "prompt", msg.content);
+            char *req_json = cJSON_PrintUnformatted(req);
+            cJSON_Delete(req);
+            if (req_json) {
+                tool_output[0] = '\0';
+                esp_err_t oerr = tool_registry_execute("observe_scene", req_json,
+                                                       tool_output, TOOL_OUTPUT_SIZE);
+                free(req_json);
+                if (oerr == ESP_OK && tool_output[0]) {
+                    obs_text = strdup(tool_output);
+                } else {
+                    ESP_LOGW(TAG, "Auto observe failed: %s", esp_err_to_name(oerr));
+                    mimi_msg_t out = {0};
+                    strncpy(out.channel, msg.channel, sizeof(out.channel) - 1);
+                    strncpy(out.chat_id, msg.chat_id, sizeof(out.chat_id) - 1);
+                    out.content = strdup(tool_output[0] ? tool_output : "Observation failed.");
+                    if (out.content) {
+                        if (message_bus_push_outbound(&out) != ESP_OK) {
+                            ESP_LOGW(TAG, "Outbound queue full, drop observe error");
+                            free(out.content);
+                        }
+                    }
+                    free(msg.content);
+                    continue;
+                }
+            }
+        }
 
         /* 1. Build system prompt */
         context_build_system_prompt(system_prompt, MIMI_CONTEXT_BUF_SIZE);
@@ -203,6 +284,14 @@ static void agent_loop_task(void *arg)
 
         cJSON *messages = cJSON_Parse(history_json);
         if (!messages) messages = cJSON_CreateArray();
+
+        /* Inject fresh observation if available */
+        if (obs_text) {
+            cJSON *obs_msg = cJSON_CreateObject();
+            cJSON_AddStringToObject(obs_msg, "role", "system");
+            cJSON_AddStringToObject(obs_msg, "content", obs_text);
+            cJSON_AddItemToArray(messages, obs_msg);
+        }
 
         /* 3. Append current user message */
         cJSON *user_msg = cJSON_CreateObject();
@@ -239,6 +328,13 @@ static void agent_loop_task(void *arg)
 
             if (err != ESP_OK) {
                 ESP_LOGE(TAG, "LLM call failed: %s", esp_err_to_name(err));
+                last_err = err;
+                const char *le = llm_last_error();
+                if (le && le[0]) {
+                    snprintf(llm_error, sizeof(llm_error), "LLM error: %s", le);
+                } else {
+                    snprintf(llm_error, sizeof(llm_error), "LLM error: %s", esp_err_to_name(err));
+                }
                 break;
             }
 
@@ -305,7 +401,13 @@ static void agent_loop_task(void *arg)
             mimi_msg_t out = {0};
             strncpy(out.channel, msg.channel, sizeof(out.channel) - 1);
             strncpy(out.chat_id, msg.chat_id, sizeof(out.chat_id) - 1);
-            out.content = strdup("Sorry, I encountered an error.");
+            const char *err_msg = llm_error[0] ? llm_error : NULL;
+            if (!err_msg && last_err != ESP_OK) {
+                static char fallback[96];
+                snprintf(fallback, sizeof(fallback), "LLM error: %s", esp_err_to_name(last_err));
+                err_msg = fallback;
+            }
+            out.content = strdup(err_msg ? err_msg : "Sorry, I encountered an error.");
             if (out.content) {
                 if (message_bus_push_outbound(&out) != ESP_OK) {
                     ESP_LOGW(TAG, "Outbound queue full, drop error response");
@@ -316,6 +418,7 @@ static void agent_loop_task(void *arg)
 
         /* Free inbound message content */
         free(msg.content);
+        free(obs_text);
 
         /* Log memory status */
         ESP_LOGI(TAG, "Free PSRAM: %d bytes",
